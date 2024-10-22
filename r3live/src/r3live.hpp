@@ -339,7 +339,8 @@ public:
             cout << "LiDAR pointcloud topic: " << LiDAR_pointcloud_topic << endl;
             cout << "IMU topic: " << IMU_topic << endl;
             cout << "Image topic: " << IMAGE_topic << endl;
-            cout << "Image compressed topic: " << IMAGE_topic << endl;
+            cout << "Image compressed topic: " << IMAGE_topic_compressed << endl;
+            
              cout << "=======        -End-                =======" << endl;
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }

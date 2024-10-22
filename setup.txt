@@ -1,0 +1,21 @@
+
+ 2005  mkdir r3live_ws
+ 2006  cd r3live_ws/
+ 2007  mkdir src
+ 2008  cd src
+ 2009  git clone git@github.com:hku-mars/r3live.git
+ 2010  ls
+ 2011  git clone git@github.com:Livox-SDK/livox_ros_driver.git
+ 2012  git clone git@github.com:MapIV/map4_engine_common_utilities.git
+ 2013  git@github.com:MapIV/map4_point_type.git
+ 2014  git clone git@github.com:MapIV/map4_point_type.git
+ 2015  git clone git@github.com:MapIV/multi_lidar_controller.git
+ 2018  catkin_make
+ 2020  cd src
+ 2021  ls
+ 2022  rm livox_ros_driver/ -rf
+ 2023  cd ..
+ 2024  catkin_make
+ 2025  soruce devel/setup.bash 
+ 2032  roslaunch r3live r3live_tokyo_metro.launch 
+

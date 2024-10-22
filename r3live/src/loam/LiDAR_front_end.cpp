@@ -4,6 +4,16 @@
 #include <livox_ros_driver/CustomMsg.h>
 #include "../tools/tools_logger.hpp"
 
+#include <multi_lidar_controller/multi_lidar_controller.hpp>
+
+#include <pcl/io/pcd_io.h>
+#include <pcl/point_types.h>
+#include <pcl/sample_consensus/method_types.h>
+#include <pcl/sample_consensus/model_types.h>
+#include <pcl/segmentation/sac_segmentation.h>
+#include <pcl/filters/extract_indices.h>
+#include <pcl/common/transforms.h>
+
 using namespace std;
 
 #define IS_VALID( a ) ( ( abs( a ) > 1e8 ) ? true : false )
@@ -17,7 +27,8 @@ enum LID_TYPE
     MID,
     HORIZON,
     VELO16,
-    OUST64
+    OUST64,
+    HESAI
 };
 
 enum Feature
@@ -76,12 +87,16 @@ double cos160;
 double edgea, edgeb;
 double smallp_intersect, smallp_ratio;
 int    point_filter_num;
+vector<double> m_lidar_imu_rot;
+Eigen::Matrix4d lidar_imu_rot;
+std::string topic;
 int    g_if_using_raw_point = 1;
 int    g_LiDAR_sampling_point_step = 3;
 void   mid_handler( const sensor_msgs::PointCloud2::ConstPtr &msg );
 void   horizon_handler( const livox_ros_driver::CustomMsg::ConstPtr &msg );
 void   velo16_handler( const sensor_msgs::PointCloud2::ConstPtr &msg );
 void   oust64_handler( const sensor_msgs::PointCloud2::ConstPtr &msg );
+void   hesai_handler( const hesai_lidar::PandarScanPtr& scan_msg);
 void   give_feature( pcl::PointCloud< PointType > &pl, vector< orgtype > &types, pcl::PointCloud< PointType > &pl_corn,
                      pcl::PointCloud< PointType > &pl_surf );
 void   pub_func( pcl::PointCloud< PointType > &pl, ros::Publisher pub, const ros::Time &ct );
@@ -89,11 +104,39 @@ int    plane_judge( const pcl::PointCloud< PointType > &pl, vector< orgtype > &t
 bool   small_plane( const pcl::PointCloud< PointType > &pl, vector< orgtype > &types, uint i_cur, uint &i_nex, Eigen::Vector3d &curr_direct );
 bool   edge_jump_judge( const pcl::PointCloud< PointType > &pl, vector< orgtype > &types, uint i, Surround nor_dir );
 
+static Eigen::Matrix4d xyzrpyToTransform(std::vector<double> xyzrpy) {
+
+    double x, y, z, roll, pitch, yaw;
+    x = xyzrpy[0]; y = xyzrpy[1]; z = xyzrpy[2];
+    roll = xyzrpy[3]; pitch = xyzrpy[4]; yaw = xyzrpy[5];
+
+    Eigen::Matrix3d R;
+
+    Eigen::Matrix3d R_yaw;
+    R_yaw = Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitZ());
+
+    Eigen::Matrix3d R_pitch;
+    R_pitch = Eigen::AngleAxisd(pitch, Eigen::Vector3d::UnitY());
+
+    Eigen::Matrix3d R_roll;
+    R_roll = Eigen::AngleAxisd(roll, Eigen::Vector3d::UnitX());
+
+    R = R_roll * R_pitch * R_yaw;
+
+    Eigen::Matrix4d T = Eigen::Matrix4d::Identity();
+    T.block<3, 3>(0, 0) = R;  // 回転部分の設定
+    T.block<3, 1>(0, 3) = Eigen::Vector3d(x, y, z); // 平行移動部分の設定
+
+    return T;
+}
+
+
 int main( int argc, char **argv )
 {
     ros::init( argc, argv, "feature_extract" );
     ros::NodeHandle n;
 
+    n.param< std::string >( "Lidar_front_end/topic", topic, std::string( "/livox/lidar" ) );
     n.param< int >( "Lidar_front_end/lidar_type", lidar_type, 0 );
     n.param< double >( "Lidar_front_end/blind", blind, 0.1 );
     n.param< double >( "Lidar_front_end/inf_bound", inf_bound, 4 );
@@ -115,6 +158,8 @@ int main( int argc, char **argv )
     n.param< int >( "Lidar_front_end/point_filter_num", point_filter_num, 1 );
     n.param< int >( "Lidar_front_end/point_step", g_LiDAR_sampling_point_step, 3 );
     n.param< int >( "Lidar_front_end/using_raw_point", g_if_using_raw_point, 1 );
+    n.param< std::vector< double > >( "Lidar_front_end/lidar_to_imu_ext", m_lidar_imu_rot, std::vector< double >( 6, 0 ) );
+    lidar_imu_rot = xyzrpyToTransform(m_lidar_imu_rot);
 
     jump_up_limit = cos( jump_up_limit / 180 * M_PI );
     jump_down_limit = cos( jump_down_limit / 180 * M_PI );
@@ -127,22 +172,28 @@ int main( int argc, char **argv )
     {
     case MID:
         printf( "MID40\n" );
-        sub_points = n.subscribe( "/livox/lidar", 1000, mid_handler, ros::TransportHints().tcpNoDelay() );
+        sub_points = n.subscribe( topic, 1000, mid_handler, ros::TransportHints().tcpNoDelay() );
         break;
 
     case HORIZON:
         printf( "HORIZON\n" );
-        sub_points = n.subscribe( "/livox/lidar", 1000, horizon_handler, ros::TransportHints().tcpNoDelay() );
+        sub_points = n.subscribe( topic, 1000, horizon_handler, ros::TransportHints().tcpNoDelay() );
         break;
 
     case VELO16:
         printf( "VELO16\n" );
-        sub_points = n.subscribe( "/velodyne_points", 1000, velo16_handler, ros::TransportHints().tcpNoDelay() );
+        sub_points = n.subscribe( topic, 1000, velo16_handler, ros::TransportHints().tcpNoDelay() );
         break;
 
     case OUST64:
         printf( "OUST64\n" );
-        sub_points = n.subscribe( "/os_cloud_node/points", 1000, oust64_handler, ros::TransportHints().tcpNoDelay() );
+        sub_points = n.subscribe( topic, 1000, oust64_handler, ros::TransportHints().tcpNoDelay() );
+        break;
+    
+    case HESAI:
+        printf( "HESAI\n" );
+        sub_points = n.subscribe( topic, 1000, hesai_handler, ros::TransportHints().tcpNoDelay() );
+        // sub_points = n.subscribe( "/pandar_packets", 1000, hesai_handler, ros::TransportHints().tcpNoDelay() );
         break;
 
     default:
@@ -285,6 +336,62 @@ void horizon_handler( const livox_ros_driver::CustomMsg::ConstPtr &msg )
 }
 
 int orders[ 16 ] = { 0, 2, 4, 6, 8, 10, 12, 14, 1, 3, 5, 7, 9, 11, 13, 15 };
+
+void hesai_handler( const hesai_lidar::PandarScanPtr& msg )
+{
+    static LiDARParam param;
+    param.model = std::string("PandarXT-32M");
+    param.topic_type = LiDARTopicType::HESAI_PACKETS;
+    static LiDARController lidar_controller(param, "");
+
+    sensor_msgs::PointCloud2::Ptr points_msg = lidar_controller.convertScan2Points(msg);
+
+    // process like oust64_handler
+    pcl::PointCloud< PointType > pl_processed;
+    pcl::PointCloud< PointType > pl_orig;
+    pcl::fromROSMsg(*points_msg, pl_orig);
+    pcl::transformPointCloud(pl_orig, pl_orig, lidar_imu_rot); // convert lidar frame to imu frame
+
+    pl_processed.clear();
+    pl_processed.reserve( pl_orig.points.size() );
+
+    for (int i = 0; i < pl_orig.points.size(); i++)
+    {
+        // check range
+        double range = std::sqrt(pl_orig.points[i].x * pl_orig.points[i].x + pl_orig.points[i].y * pl_orig.points[i].y + pl_orig.points[i].z * pl_orig.points[i].z);
+        if (range < blind)
+        {
+            continue;
+        }
+
+        Eigen::Vector3d pt_vec;
+        PointType added_pt;
+        added_pt.x = pl_orig.points[i].x;
+        added_pt.y = pl_orig.points[i].y;
+        added_pt.z = pl_orig.points[i].z;
+        added_pt.intensity = pl_orig.points[i].intensity;
+        added_pt.normal_x = 0;
+        added_pt.normal_y = 0;
+        added_pt.normal_z = 0;
+        // added_pt.intensity = pl_orig.points[ i ].reflectivity;
+        // added_pt.curvature = pl_orig.points[ i ].offset_time / float( 1000000 ); 
+
+        // double yaw_angle = std::atan2(added_pt.y, added_pt.x) * 57.3;
+        // if (yaw_angle >= 180.0)
+        //     yaw_angle -= 360.0;
+        // if (yaw_angle <= -180.0)
+        //     yaw_angle += 360.0;
+
+        // added_pt.curvature = (pl_orig.points[i].t / 1e9) * 1000.0;
+        added_pt.curvature = pl_orig.points[i].curvature;
+
+        pl_processed.points.push_back(added_pt);
+    }
+
+    pub_func( pl_processed, pub_full, msg->header.stamp );
+    pub_func( pl_processed, pub_surf, msg->header.stamp );
+    pub_func( pl_processed, pub_corn, msg->header.stamp );
+}
 
 void velo16_handler( const sensor_msgs::PointCloud2::ConstPtr &msg )
 {

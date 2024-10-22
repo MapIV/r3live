@@ -26,6 +26,7 @@ find_package(catkin REQUIRED COMPONENTS
                     tf
                     cv_bridge
                     livox_ros_driver
+                    multi_lidar_controller
             )
 
 # find_package(Ceres REQUIRED)

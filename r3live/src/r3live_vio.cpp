@@ -321,6 +321,43 @@ void R3LIVE::service_process_img_buffer()
     }
 }
 
+
+static sensor_msgs::Image::Ptr decompressImage(sensor_msgs::CompressedImage::ConstPtr compressed_img)
+{
+  cv_bridge::CvImage raw_image;
+  raw_image.header = compressed_img->header;
+
+  const std::string& format = compressed_img->format;
+  const std::string encoding = format.substr(0, format.find(";"));
+  raw_image.encoding = encoding;
+
+  bool encoding_is_bayer = encoding.find("bayer") != std::string::npos;
+  if (encoding_is_bayer)
+  {
+    raw_image.image = cv::imdecode(cv::Mat(compressed_img->data), 0 /* '1': rgb, '0': gray*/);
+    if (encoding == "bayer_rggb8")
+      cv::cvtColor(raw_image.image, raw_image.image, cv::COLOR_BayerBG2BGR);
+    else if (encoding == "bayer_bggr8")
+      cv::cvtColor(raw_image.image, raw_image.image, cv::COLOR_BayerRG2BGR);
+    else if (encoding == "bayer_grbg8")
+      cv::cvtColor(raw_image.image, raw_image.image, cv::COLOR_BayerGB2BGR);
+    else if (encoding == "bayer_gbrg8")
+      cv::cvtColor(raw_image.image, raw_image.image, cv::COLOR_BayerGR2BGR);
+    else
+    {
+      std::cerr << encoding << " is not supported encoding" << std::endl;
+      std::cerr << "Please implement additional decoding in " << __FUNCTION__ << std::endl;
+      exit(4);
+    }
+
+    raw_image.encoding = "bgr8";
+    return raw_image.toImageMsg();
+  }
+
+  raw_image.image = cv::imdecode(cv::Mat(compressed_img->data), 1 /* '1': rgb, '0': gray*/);
+  return raw_image.toImageMsg();
+}
+
 void R3LIVE::image_comp_callback( const sensor_msgs::CompressedImageConstPtr &msg )
 {
     std::unique_lock< std::mutex > lock2( mutex_image_callback );
@@ -335,7 +372,11 @@ void R3LIVE::image_comp_callback( const sensor_msgs::CompressedImageConstPtr &ms
         g_flag_if_first_rec_img = 0;
         m_thread_pool_ptr->commit_task( &R3LIVE::service_process_img_buffer, this );
     }
-    return;
+    
+    auto image_msg = decompressImage(msg);
+
+    cv::Mat temp_img = cv_bridge::toCvCopy( image_msg, sensor_msgs::image_encodings::BGR8 )->image.clone();
+    process_image( temp_img, msg->header.stamp.toSec() );
 }
 
 // ANCHOR - image_callback
@@ -1244,7 +1285,8 @@ void R3LIVE::service_VIO_update()
         // publish_render_pts( m_pub_render_rgb_pts, m_map_rgb_pts );
         publish_camera_odom( img_pose, message_time );
         // publish_track_img( op_track.m_debug_track_img, display_cost_time );
-        publish_track_img( img_pose->m_raw_img, display_cost_time );
+        // publish_track_img( img_pose->m_raw_img, display_cost_time );
+        publish_track_img( op_track.m_debug_track_img, display_cost_time );
 
         if ( m_if_pub_raw_img )
         {

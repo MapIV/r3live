@@ -268,6 +268,7 @@ void Rgbmap_tracker::track_img( std::shared_ptr< Image_frame > &img_pose, double
 
     m_map_rgb_pts_in_current_frame_pos.clear();
     double frame_time_diff = ( m_current_frame_time - m_last_frame_time );
+    m_debug_track_img = m_current_frame.clone();
     for ( uint i = 0; i < m_last_tracked_pts.size(); i++ )
     {
         if ( img_pose->if_2d_points_available( m_current_tracked_pts[ i ].x, m_current_tracked_pts[ i ].y, 1.0, 0.05 ) )
@@ -279,6 +280,13 @@ void Rgbmap_tracker::track_img( std::shared_ptr< Image_frame > &img_pose, double
             rgb_pts_ptr->m_img_pt_in_current_frame =
                 vec_2( m_current_tracked_pts[ i ].x, m_current_tracked_pts[ i ].y );
             rgb_pts_ptr->m_img_vel = vec_2( pt_img_vel.x, pt_img_vel.y );
+
+            static cv::RNG rng(cv::getTickCount());
+            std::vector<cv::Scalar> colors = {cv::Scalar(0,0,255), cv::Scalar(0,255,0), cv::Scalar(255,0,0), cv::Scalar(255,255,0), cv::Scalar(255,0,255), cv::Scalar(0,255,255)};
+            cv::Scalar color = colors[rng.uniform(0, 6)];
+            cv::circle( m_debug_track_img, m_current_tracked_pts[ i ], 10, color, -1 );
+            cv::line( m_debug_track_img, m_last_tracked_pts[ i ], m_current_tracked_pts[ i ], color, 4 );
+        
         }
     }
 
